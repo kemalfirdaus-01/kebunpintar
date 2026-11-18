@@ -142,24 +142,41 @@ const lain=(a,n,kecuali)=>acak(a.filter(x=>!kecuali.includes(x))).slice(0,n);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const WT=['#fb923c','#38bdf8','#a78bfa','#4ade80'];
 
-function bicara(teks,lang){
+/* ===== suara: satu antrean, tidak pernah berbarengan =====
+   langkah: {tts,lang} (suara HP) atau {mp3,cadangan} (rekaman); jeda = ms sesudah langkah itu */
+let antri=0,audioNow=null;
+function diam(){antri++;try{window.speechSynthesis&&speechSynthesis.cancel()}catch(e){}if(audioNow){try{audioNow.pause()}catch(e){}audioNow=null}}
+function ucapTTS(teks,lang,done){
+  let sudah=false;const ok=()=>{if(!sudah){sudah=true;done&&done()}};
   try{
-    if(!('speechSynthesis' in window)||!teks)return;
-    speechSynthesis.cancel();
+    if(!('speechSynthesis' in window)||!teks)return ok();
     const u=new SpeechSynthesisUtterance(teks);
     u.lang=lang||(S.lang==='en'?'en-US':'id-ID');u.rate=.9;u.pitch=1.15;
     const v=speechSynthesis.getVoices().find(v=>v.lang.replace('_','-').toLowerCase().startsWith(u.lang.slice(0,2)));
     if(v)u.voice=v;
-    speechSynthesis.speak(u);
-  }catch(e){}
+    u.onend=u.onerror=ok;setTimeout(()=>speechSynthesis.speak(u),60); // jeda kecil: Chrome kadang membuang ucapan tepat sesudah cancel()
+    setTimeout(ok,1500+teks.length*110); // cadangan: onend kadang tidak terpanggil di HP
+  }catch(e){ok()}
 }
+function putarUrut(langkah,selesai){
+  diam();const id=antri;langkah=langkah.filter(Boolean);
+  const jalan=i=>{
+    if(id!==antri)return;
+    if(i>=langkah.length)return selesai&&selesai();
+    const s=langkah[i];let sudah=false;
+    const lanjut=()=>{if(sudah)return;sudah=true;setTimeout(()=>jalan(i+1),s.jeda==null?350:s.jeda)};
+    if(!s.mp3)return ucapTTS(s.tts,s.lang,lanjut);
+    const gagal=()=>{if(id!==antri||sudah)return;s.cadangan?ucapTTS(s.cadangan,s.lang,lanjut):lanjut()};
+    try{const a=new Audio(s.mp3);audioNow=a;a.onended=lanjut;a.onerror=gagal;a.play().catch(gagal);setTimeout(()=>{if(!sudah&&id===antri&&a.paused)gagal()},4000)}catch(e){gagal()}
+  };
+  jalan(0);
+}
+function bicara(teks,lang,selesai){putarUrut([{tts:teks,lang}],selesai)}
 // Huruf A-Z bahasa Indonesia: rekaman klon suara; bahasa Inggris & cadangan: suara HP
-function suaraHuruf(c,lalu){
-  const tts=()=>bicara(c+(lalu?', '+lalu:''));
-  if(S.lang!=='id')return tts();
-  try{const a=new Audio('suara/alfabet/'+c.toLowerCase()+'.mp3');a.onended=()=>lalu&&bicara(lalu);a.onerror=tts;a.play().catch(tts)}catch(e){tts()}
-}
-function suaraHij(i){try{new Audio('suara/h'+String(i).padStart(2,'0')+'.mp3').play().catch(()=>{})}catch(e){}}
+const langkahHuruf=(c,lalu)=>S.lang!=='id'?[{tts:c+(lalu?', '+lalu:'')}]:[{mp3:'suara/alfabet/'+c.toLowerCase()+'.mp3',cadangan:c,jeda:300},lalu&&{tts:lalu}];
+function suaraHuruf(c,lalu,selesai){putarUrut(langkahHuruf(c,lalu),selesai)}
+const langkahHij=i=>({mp3:'suara/h'+String(i).padStart(2,'0')+'.mp3'});
+function suaraHij(i,selesai){putarUrut([langkahHij(i)],selesai)}
 
 /* ===== materi ===== */
 const BENDA=[
@@ -197,13 +214,16 @@ function tambahBintang(n=1){S.bintang+=n;simpan('bintang',S.bintang);$('#bintang
 function konfeti(){for(let i=0;i<14;i++){const s=document.createElement('div');s.className='konfeti';s.textContent=pilih(['⭐','🌟','🎉','🍎','🌸','🦋']);
   s.style.left='50%';s.style.top='45%';s.style.setProperty('--x',(Math.random()*360-180)+'px');s.style.setProperty('--y',(Math.random()*-320+60)+'px');
   document.body.appendChild(s);setTimeout(()=>s.remove(),1300)}}
-function pujian(ucap,lang){konfeti();bicara(ucap||pilih(S.lang==='en'?['Great job!','Awesome!','Well done!']:['Hebat!','Pintar sekali!','MasyaAllah, benar!']),lang)}
+const kataPujian=()=>pilih(S.lang==='en'?['Great job!','Awesome!','Well done!']:['Hebat!','Pintar sekali!','MasyaAllah, benar!']);
+function pujian(ucap,lang,selesai){konfeti();bicara(ucap||kataPujian(),lang,selesai)}
+// pindah soal hanya setelah suara selesai + jeda; cadangan waktu kalau suara macet
+function sesudahSuara(langkah,lanjut,jeda=800,maks=9000){let sudah=false;const go=()=>{if(sudah)return;sudah=true;lanjut()};putarUrut(langkah,()=>setTimeout(go,jeda));setTimeout(go,maks)}
 function cobaLagi(el){if(el){el.classList.remove('salah');void el.offsetWidth;el.classList.add('salah')}bicara(T('Coba lagi ya','Try again'))}
 
 /* ===== navigasi ===== */
 const atas=(judul,kembali)=>`<div class="judulbar"><button class="btn" onclick="buka(${kembali?`'mapel','${kembali}'`:`'beranda'`})">⬅</button><h2>${judul}</h2></div>`;
 function buka(layar,arg){
-  try{window.speechSynthesis&&speechSynthesis.cancel()}catch(e){}
+  diam();
   if(S.istirahat&&!['cetakMenu','istirahat','ortu'].includes(layar))return tampilIstirahat();
   scrollTo(0,0);
   ({beranda,mapel,akt:mulaiAkt,cetakMenu,ortu:()=>gerbang(layarOrtu),istirahat:tampilIstirahat})[layar](arg);
@@ -244,13 +264,16 @@ function kuis(judul,kembali,buat,ronde,kunciCetak){
     <div class="soal">${q.soal}</div><div class="gambar">${q.gambar||''}</div>
     <div class="opsi">${q.opsi.map((o,i)=>`<button data-i="${i}" class="${o.kecil?'kecil':''}" style="background:${o.bg||WT[i%4]}">${o.label}</button>`).join('')}</div>
     <div class="baris"><button class="btn" id="dengar">🔊 ${T('Dengar','Listen')}</button></div></div>`;
-    const ucap=()=>{q.ucap&&bicara(q.ucap,q.lang);q.hij!=null&&suaraHij(q.hij)};ucap();
+    const ucap=()=>putarUrut([q.ucap&&{tts:q.ucap,lang:q.lang},q.hij!=null&&langkahHij(q.hij)]);ucap();
     $('#dengar').onclick=ucap;
     app.querySelectorAll('.opsi button').forEach(b=>b.onclick=()=>{
       const o=q.opsi[+b.dataset.i];
       if(!o.benar)return cobaLagi(b);
-      b.classList.add('benar');app.querySelectorAll('.opsi button').forEach(x=>x.disabled=true);
-      tambahBintang();if(q.huruf){konfeti();suaraHuruf(q.huruf,q.lalu)}else pujian(q.katakan,q.katakanLang);n++;setTimeout(tampil,q.huruf?1800:1300);
+      b.classList.add('benar');app.querySelectorAll('.opsi button').forEach(x=>x.disabled=true);$('#dengar').disabled=true;
+      tambahBintang();konfeti();
+      // urutan: "Benar!" -> huruf/jawaban -> jeda -> soal berikutnya
+      const langkah=q.huruf?[{tts:T('Benar!','Correct!'),jeda:300},...langkahHuruf(q.huruf,q.lalu)]:[{tts:q.katakan||kataPujian(),lang:q.katakanLang}];
+      sesudahSuara(langkah,()=>{n++;tampil()});
     });
   };
   tampil();
@@ -282,7 +305,7 @@ function jejak(judul,kembali,daftar,font){
     g.setLineDash([16,12]);g.lineWidth=5;g.strokeStyle='#94a3b8';g.strokeText(it.c,300,y);g.setLineDash([]);
     mask=g.getImageData(0,0,600,600).data;
     $('#jjInfo').innerHTML=it.label;warna=pilih(['#ef4444','#f97316','#16a34a','#2563eb','#9333ea','#db2777']);
-    if(it.huruf)suaraHuruf(it.huruf,it.lalu);else it.ucap&&bicara(it.ucap,it.lang);it.hij!=null&&suaraHij(it.hij);
+    putarUrut(it.huruf?langkahHuruf(it.huruf,it.lalu):[it.ucap&&{tts:it.ucap,lang:it.lang},it.hij!=null&&langkahHij(it.hij)]);
   }
   const pos=e=>{const r=cd.getBoundingClientRect();return[(e.clientX-r.left)*600/r.width,(e.clientY-r.top)*600/r.height]};
   const garis=(a,b)=>{d.strokeStyle=warna;d.lineWidth=42;d.lineCap='round';d.lineJoin='round';d.beginPath();d.moveTo(a[0],a[1]);d.lineTo(b[0],b[1]);d.stroke()};
@@ -295,7 +318,7 @@ function jejak(judul,kembali,daftar,font){
   $('#jjCek').onclick=()=>{
     const s=d.getImageData(0,0,600,600).data;let gl=0,kena=0,luar=0,coret=0;
     for(let p=3;p<s.length;p+=16){const isG=mask[p]>0,isS=s[p]>0;if(isG){gl++;if(isS)kena++}if(isS){coret++;if(!isG)luar++}}
-    if(gl&&kena/gl>.55&&luar/(coret||1)<.7){tambahBintang();pujian();setTimeout(()=>{i=(i+1)%daftar.length;panduan()},1300)}
+    if(gl&&kena/gl>.55&&luar/(coret||1)<.7){tambahBintang();konfeti();sesudahSuara([{tts:kataPujian()}],()=>{i=(i+1)%daftar.length;panduan()})}
     else cobaLagi($('.kanvas'));
   };
   panduan();
@@ -324,7 +347,7 @@ function susun(judul,kembali,ronde){
       const x=ac[+btn.dataset.k];btn.disabled=true;slot[isi.length].textContent=x.t;slot[isi.length].classList.add('isi');isi.push(x.t);
       if(en)suaraHuruf(x.t);else bicara(x.t.toLowerCase());
       if(isi.length===bagian.length){
-        if(isi.join('')===bagian.join('')){tambahBintang();pujian(en?b.en:b.id);n++;setTimeout(tampil,1400)}
+        if(isi.join('')===bagian.join('')){tambahBintang();konfeti();sesudahSuara([{tts:T('Benar!','Correct!'),jeda:250},{tts:en?b.en:b.id}],()=>{n++;tampil()})}
         else{cobaLagi($('.slot'));setTimeout(()=>$('#hapus').click(),600)}
       }
     });
